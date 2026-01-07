@@ -3,19 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>自拍四格拍貼機 - Standalone</title>
-    <!-- 載入 Tailwind CSS -->
+    <title>自拍四格拍貼機 - 高清版</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 載入 React & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- 載入 Babel 用於轉譯 JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- 載入 Lucide 圖標庫 -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; }
+        body { 
+            font-family: 'Noto Sans TC', sans-serif; 
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .loading-spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 3px solid white;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body class="bg-rose-50">
@@ -27,6 +39,7 @@
         const App = () => {
             const [photos, setPhotos] = useState([]);
             const [isCapturing, setIsCapturing] = useState(false);
+            const [isGenerating, setIsGenerating] = useState(false);
             const [countdown, setCountdown] = useState(null);
             const [frameColor, setFrameColor] = useState('bg-white');
             const [filter, setFilter] = useState('none');
@@ -34,11 +47,15 @@
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
 
-            // 初始化鏡頭
             const startCamera = async () => {
                 try {
                     const mediaStream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'user', aspectRatio: 3/4 },
+                        video: { 
+                            facingMode: 'user', 
+                            aspectRatio: 3/4,
+                            width: { ideal: 1280 },
+                            height: { ideal: 960 }
+                        },
                         audio: false,
                     });
                     if (videoRef.current) {
@@ -46,18 +63,20 @@
                     }
                 } catch (err) {
                     console.error("無法開啟鏡頭:", err);
+                    if (err.name === 'NotAllowedError') {
+                        alert("請允許相機權限以使用拍貼功能。");
+                    }
                 }
             };
 
             useEffect(() => {
                 startCamera();
-                // 渲染 Lucide 圖標
                 if (window.lucide) window.lucide.createIcons();
             }, []);
 
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
-            }, [photos, isCapturing, countdown]);
+            }, [photos, isCapturing, countdown, isGenerating]);
 
             const capturePhoto = () => {
                 if (videoRef.current && canvasRef.current) {
@@ -69,7 +88,7 @@
                     context.translate(canvas.width, 0);
                     context.scale(-1, 1);
                     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    return canvas.toDataURL('image/png', 1.0);
+                    return canvas.toDataURL('image/png', 0.9);
                 }
                 return null;
             };
@@ -91,14 +110,19 @@
                         setPhotos([...newPhotos]);
                     }
                     setCountdown(null);
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 600));
                 }
                 setIsCapturing(false);
             };
 
             const downloadStrip = async () => {
-                if (photos.length < 4) return;
-                const SCALE = 4;
+                if (photos.length < 4 || isGenerating) return;
+                setIsGenerating(true);
+
+                // 稍微延遲讓 UI 渲染讀取狀態
+                await new Promise(r => setTimeout(r, 100));
+
+                const SCALE = 3; // 稍微調降至 3 倍以增加行動裝置穩定性，依然非常清晰
                 const UI_WIDTH = 320;
                 const UI_PADDING = 16;
                 const UI_GAP = 12;
@@ -127,47 +151,67 @@
 
                 const loadImg = (src) => new Promise((resolve) => {
                     const img = new Image();
+                    img.crossOrigin = "anonymous";
                     img.onload = () => resolve(img);
                     img.src = src;
                 });
 
-                const loadedImgs = await Promise.all(photos.map(src => loadImg(src)));
-                loadedImgs.forEach((img, index) => {
-                    const x = UI_PADDING * SCALE;
-                    const y = (UI_PADDING + (index * (UI_PHOTO_H + UI_GAP))) * SCALE;
-                    ctx.save();
-                    if (filter === 'grayscale') ctx.filter = 'grayscale(100%)';
-                    if (filter === 'sepia') ctx.filter = 'sepia(100%)';
-                    ctx.drawImage(img, x, y, UI_PHOTO_W * SCALE, UI_PHOTO_H * SCALE);
-                    ctx.restore();
-                });
+                try {
+                    const loadedImgs = await Promise.all(photos.map(src => loadImg(src)));
+                    loadedImgs.forEach((img, index) => {
+                        const x = UI_PADDING * SCALE;
+                        const y = (UI_PADDING + (index * (UI_PHOTO_H + UI_GAP))) * SCALE;
+                        ctx.save();
+                        if (filter === 'grayscale') ctx.filter = 'grayscale(100%)';
+                        if (filter === 'sepia') ctx.filter = 'sepia(100%)';
+                        ctx.drawImage(img, x, y, UI_PHOTO_W * SCALE, UI_PHOTO_H * SCALE);
+                        ctx.restore();
+                    });
 
-                const textY = (UI_PADDING + (UI_PHOTO_H * 4) + (UI_GAP * 3) + UI_FOOT_PT + (UI_TEXT_H / 2)) * SCALE;
-                ctx.fillStyle = frameColor === 'bg-slate-900' ? '#ffffff' : '#94a3b8';
-                ctx.font = `bold ${11 * SCALE}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText("MY PHOTO MOMENT ✨", canvas.width / 2, textY);
+                    const textY = (UI_PADDING + (UI_PHOTO_H * 4) + (UI_GAP * 3) + UI_FOOT_PT + (UI_TEXT_H / 2)) * SCALE;
+                    ctx.fillStyle = frameColor === 'bg-slate-900' ? '#ffffff' : '#94a3b8';
+                    ctx.font = `bold ${11 * SCALE}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText("MY PHOTO MOMENT ✨", canvas.width / 2, textY);
 
-                const link = document.createElement('a');
-                link.download = `photostrip-${Date.now()}.png`;
-                link.href = canvas.toDataURL('image/png', 1.0);
-                link.click();
+                    // 使用 Blob 處理下載，對 iOS 更友善
+                    canvas.toBlob((blob) => {
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `photostrip-${Date.now()}.png`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        
+                        // 延遲釋放 URL
+                        setTimeout(() => {
+                            URL.revokeObjectURL(url);
+                            setIsGenerating(false);
+                        }, 1000);
+                    }, 'image/png');
+
+                } catch (err) {
+                    console.error("生成圖片失敗:", err);
+                    setIsGenerating(false);
+                    alert("圖片生成失敗，請稍後再試。");
+                }
             };
 
             return (
                 <div className="min-h-screen p-4 md:p-8 flex flex-col items-center">
                     <header className="mb-8 text-center">
-                        <h1 className="text-4xl font-black text-rose-400 flex items-center justify-center gap-2">
+                        <h1 className="text-3xl md:text-4xl font-black text-rose-400 flex items-center justify-center gap-2">
                             自拍四格拍貼機
                         </h1>
-                        <p className="text-slate-500 mt-2 italic">1:1 原生比例高清下載</p>
+                        <p className="text-slate-500 mt-2 italic font-medium text-sm md:text-base">iOS 行動裝置相容高清版</p>
                     </header>
 
                     <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
                         <div className="flex flex-col gap-6">
-                            <div className="relative aspect-[3/4] bg-black rounded-3xl overflow-hidden shadow-2xl border-8 border-white ring-4 ring-rose-200">
-                                <video ref={videoRef} autoPlay playsInline className={`w-full h-full object-cover scale-x-[-1] ${filter === 'grayscale' ? 'grayscale' : ''} ${filter === 'sepia' ? 'sepia' : ''}`} />
+                            <div className="relative aspect-[3/4] bg-black rounded-3xl overflow-hidden shadow-2xl border-4 md:border-8 border-white ring-4 ring-rose-200">
+                                <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${filter === 'grayscale' ? 'grayscale' : ''} ${filter === 'sepia' ? 'sepia' : ''}`} />
                                 {countdown && (
                                     <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm">
                                         <span className="text-7xl font-black text-white drop-shadow-lg animate-bounce">{countdown}</span>
@@ -176,19 +220,19 @@
                             </div>
                             <div className="flex justify-center gap-4">
                                 {!isCapturing && photos.length < 4 && (
-                                    <button onClick={startSequence} className="px-8 py-4 bg-rose-400 hover:bg-rose-500 text-white rounded-full font-bold shadow-lg text-lg">
+                                    <button onClick={startSequence} className="px-10 py-4 bg-rose-400 hover:bg-rose-500 text-white rounded-full font-bold shadow-lg text-lg transform transition active:scale-95">
                                         開始四連拍
                                     </button>
                                 )}
                                 {photos.length === 4 && (
-                                    <button onClick={() => setPhotos([])} className="px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-full font-bold">
+                                    <button onClick={() => setPhotos([])} className="px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-full font-bold transition">
                                         重新拍攝
                                     </button>
                                 )}
                             </div>
                             <div className="flex justify-center gap-3">
                                 {['none', 'grayscale', 'sepia'].map((f) => (
-                                    <button key={f} onClick={() => setFilter(f)} className={`px-4 py-1 rounded-md text-xs font-bold uppercase ${filter === f ? 'bg-rose-200 text-rose-700' : 'bg-white text-slate-400 border'}`}>
+                                    <button key={f} onClick={() => setFilter(f)} className={`px-4 py-1 rounded-md text-xs font-bold uppercase transition ${filter === f ? 'bg-rose-200 text-rose-700' : 'bg-white text-slate-400 border'}`}>
                                         {f === 'none' ? '正常' : f === 'grayscale' ? '黑白' : '復古'}
                                     </button>
                                 ))}
@@ -197,7 +241,7 @@
 
                         <div className="flex flex-col items-center gap-6">
                             <h2 className="text-xl font-bold text-slate-600">成品預覽</h2>
-                            <div className={`p-4 ${frameColor} shadow-xl flex flex-col gap-3 border border-slate-100 w-[320px]`}>
+                            <div id="preview-strip" className={`p-4 ${frameColor} shadow-xl flex flex-col gap-3 border border-slate-100 w-[280px] md:w-[320px] transition-colors duration-300`}>
                                 {[0, 1, 2, 3].map((idx) => (
                                     <div key={idx} className="aspect-[4/3] bg-slate-200 overflow-hidden relative">
                                         {photos[idx] && <img src={photos[idx]} className={`w-full h-full object-cover ${filter === 'grayscale' ? 'grayscale' : ''} ${filter === 'sepia' ? 'sepia' : ''}`} />}
@@ -212,12 +256,22 @@
                             <div className="w-full max-w-xs space-y-6 bg-white p-6 rounded-2xl shadow-sm border border-rose-100">
                                 <div className="flex justify-center gap-4">
                                     {['bg-white', 'bg-pink-100', 'bg-yellow-50', 'bg-slate-900'].map((c) => (
-                                        <button key={c} onClick={() => setFrameColor(c)} className={`w-8 h-8 rounded-full border-2 ${frameColor === c ? 'border-rose-400 scale-125' : 'border-slate-200'}`} style={{ backgroundColor: c === 'bg-white' ? '#fff' : c === 'bg-pink-100' ? '#fce4ec' : c === 'bg-yellow-50' ? '#fefce8' : '#0f172a' }} />
+                                        <button key={c} onClick={() => setFrameColor(c)} className={`w-8 h-8 rounded-full border-2 transition-transform ${frameColor === c ? 'border-rose-400 scale-125 ring-2 ring-rose-100' : 'border-slate-200'}`} style={{ backgroundColor: c === 'bg-white' ? '#fff' : c === 'bg-pink-100' ? '#fce4ec' : c === 'bg-yellow-50' ? '#fefce8' : '#0f172a' }} />
                                     ))}
                                 </div>
-                                <button disabled={photos.length < 4} onClick={downloadStrip} className={`w-full py-4 rounded-xl font-bold text-white ${photos.length < 4 ? 'bg-slate-300' : 'bg-indigo-500 hover:bg-indigo-600'}`}>
-                                    下載成品圖片
+                                <button 
+                                    disabled={photos.length < 4 || isGenerating} 
+                                    onClick={downloadStrip} 
+                                    className={`w-full py-4 rounded-xl font-bold text-white transition shadow-md flex items-center justify-center gap-2 ${photos.length < 4 || isGenerating ? 'bg-slate-300 cursor-not-allowed' : 'bg-indigo-500 hover:bg-indigo-600 active:scale-95'}`}
+                                >
+                                    {isGenerating ? (
+                                        <><div className="loading-spinner"></div> 高清圖片處理中...</>
+                                    ) : "下載成品圖片"}
                                 </button>
+                                <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+                                    ※ 若 iPhone 下載無反應，請嘗試在 Safari 瀏覽器開啟。<br/>
+                                    或下載後檢查「檔案」App 中的「下載項目」。
+                                </p>
                             </div>
                         </div>
                     </div>
