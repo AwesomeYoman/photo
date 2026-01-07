@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自拍四格拍貼機 - Standalone</title>
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- 載入 Babel 用於轉譯 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 載入 Lucide 圖標庫 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+    </style>
+</head>
+<body class="bg-rose-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        const App = () => {
+            const [photos, setPhotos] = useState([]);
+            const [isCapturing, setIsCapturing] = useState(false);
+            const [countdown, setCountdown] = useState(null);
+            const [frameColor, setFrameColor] = useState('bg-white');
+            const [filter, setFilter] = useState('none');
+            
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+
+            // 初始化鏡頭
+            const startCamera = async () => {
+                try {
+                    const mediaStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'user', aspectRatio: 3/4 },
+                        audio: false,
+                    });
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = mediaStream;
+                    }
+                } catch (err) {
+                    console.error("無法開啟鏡頭:", err);
+                }
+            };
+
+            useEffect(() => {
+                startCamera();
+                // 渲染 Lucide 圖標
+                if (window.lucide) window.lucide.createIcons();
+            }, []);
+
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, [photos, isCapturing, countdown]);
+
+            const capturePhoto = () => {
+                if (videoRef.current && canvasRef.current) {
+                    const video = videoRef.current;
+                    const canvas = canvasRef.current;
+                    const context = canvas.getContext('2d');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    context.translate(canvas.width, 0);
+                    context.scale(-1, 1);
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    return canvas.toDataURL('image/png', 1.0);
+                }
+                return null;
+            };
+
+            const startSequence = async () => {
+                if (isCapturing || photos.length === 4) return;
+                setIsCapturing(true);
+                const newPhotos = [];
+                for (let i = 0; i < 4; i++) {
+                    for (let c = 3; c > 0; c--) {
+                        setCountdown(c);
+                        await new Promise(r => setTimeout(r, 800));
+                    }
+                    setCountdown('📸');
+                    await new Promise(r => setTimeout(r, 400));
+                    const photo = capturePhoto();
+                    if (photo) {
+                        newPhotos.push(photo);
+                        setPhotos([...newPhotos]);
+                    }
+                    setCountdown(null);
+                    await new Promise(r => setTimeout(r, 500));
+                }
+                setIsCapturing(false);
+            };
+
+            const downloadStrip = async () => {
+                if (photos.length < 4) return;
+                const SCALE = 4;
+                const UI_WIDTH = 320;
+                const UI_PADDING = 16;
+                const UI_GAP = 12;
+                const UI_PHOTO_W = UI_WIDTH - (UI_PADDING * 2);
+                const UI_PHOTO_H = UI_PHOTO_W * 0.75;
+                const UI_FOOT_PT = 8;
+                const UI_FOOT_PB = 24;
+                const UI_TEXT_H = 20;
+
+                const finalWidth = UI_WIDTH * SCALE;
+                const finalHeight = (UI_PADDING + (UI_PHOTO_H * 4) + (UI_GAP * 3) + UI_FOOT_PT + UI_TEXT_H + UI_FOOT_PB) * SCALE;
+
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = finalWidth;
+                canvas.height = finalHeight;
+
+                const bgColorMap = {
+                    'bg-white': '#ffffff',
+                    'bg-pink-100': '#fce4ec',
+                    'bg-slate-900': '#0f172a',
+                    'bg-yellow-50': '#fefce8'
+                };
+                ctx.fillStyle = bgColorMap[frameColor] || '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const loadImg = (src) => new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.src = src;
+                });
+
+                const loadedImgs = await Promise.all(photos.map(src => loadImg(src)));
+                loadedImgs.forEach((img, index) => {
+                    const x = UI_PADDING * SCALE;
+                    const y = (UI_PADDING + (index * (UI_PHOTO_H + UI_GAP))) * SCALE;
+                    ctx.save();
+                    if (filter === 'grayscale') ctx.filter = 'grayscale(100%)';
+                    if (filter === 'sepia') ctx.filter = 'sepia(100%)';
+                    ctx.drawImage(img, x, y, UI_PHOTO_W * SCALE, UI_PHOTO_H * SCALE);
+                    ctx.restore();
+                });
+
+                const textY = (UI_PADDING + (UI_PHOTO_H * 4) + (UI_GAP * 3) + UI_FOOT_PT + (UI_TEXT_H / 2)) * SCALE;
+                ctx.fillStyle = frameColor === 'bg-slate-900' ? '#ffffff' : '#94a3b8';
+                ctx.font = `bold ${11 * SCALE}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText("MY PHOTO MOMENT ✨", canvas.width / 2, textY);
+
+                const link = document.createElement('a');
+                link.download = `photostrip-${Date.now()}.png`;
+                link.href = canvas.toDataURL('image/png', 1.0);
+                link.click();
+            };
+
+            return (
+                <div className="min-h-screen p-4 md:p-8 flex flex-col items-center">
+                    <header className="mb-8 text-center">
+                        <h1 className="text-4xl font-black text-rose-400 flex items-center justify-center gap-2">
+                            自拍四格拍貼機
+                        </h1>
+                        <p className="text-slate-500 mt-2 italic">1:1 原生比例高清下載</p>
+                    </header>
+
+                    <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+                        <div className="flex flex-col gap-6">
+                            <div className="relative aspect-[3/4] bg-black rounded-3xl overflow-hidden shadow-2xl border-8 border-white ring-4 ring-rose-200">
+                                <video ref={videoRef} autoPlay playsInline className={`w-full h-full object-cover scale-x-[-1] ${filter === 'grayscale' ? 'grayscale' : ''} ${filter === 'sepia' ? 'sepia' : ''}`} />
+                                {countdown && (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+                                        <span className="text-7xl font-black text-white drop-shadow-lg animate-bounce">{countdown}</span>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex justify-center gap-4">
+                                {!isCapturing && photos.length < 4 && (
+                                    <button onClick={startSequence} className="px-8 py-4 bg-rose-400 hover:bg-rose-500 text-white rounded-full font-bold shadow-lg text-lg">
+                                        開始四連拍
+                                    </button>
+                                )}
+                                {photos.length === 4 && (
+                                    <button onClick={() => setPhotos([])} className="px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-full font-bold">
+                                        重新拍攝
+                                    </button>
+                                )}
+                            </div>
+                            <div className="flex justify-center gap-3">
+                                {['none', 'grayscale', 'sepia'].map((f) => (
+                                    <button key={f} onClick={() => setFilter(f)} className={`px-4 py-1 rounded-md text-xs font-bold uppercase ${filter === f ? 'bg-rose-200 text-rose-700' : 'bg-white text-slate-400 border'}`}>
+                                        {f === 'none' ? '正常' : f === 'grayscale' ? '黑白' : '復古'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col items-center gap-6">
+                            <h2 className="text-xl font-bold text-slate-600">成品預覽</h2>
+                            <div className={`p-4 ${frameColor} shadow-xl flex flex-col gap-3 border border-slate-100 w-[320px]`}>
+                                {[0, 1, 2, 3].map((idx) => (
+                                    <div key={idx} className="aspect-[4/3] bg-slate-200 overflow-hidden relative">
+                                        {photos[idx] && <img src={photos[idx]} className={`w-full h-full object-cover ${filter === 'grayscale' ? 'grayscale' : ''} ${filter === 'sepia' ? 'sepia' : ''}`} />}
+                                    </div>
+                                ))}
+                                <div className="pt-2 pb-6 text-center">
+                                    <span className={`text-[10px] font-black tracking-[0.2em] ${frameColor === 'bg-slate-900' ? 'text-white' : 'text-slate-400'}`}>
+                                        MY PHOTO MOMENT ✨
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="w-full max-w-xs space-y-6 bg-white p-6 rounded-2xl shadow-sm border border-rose-100">
+                                <div className="flex justify-center gap-4">
+                                    {['bg-white', 'bg-pink-100', 'bg-yellow-50', 'bg-slate-900'].map((c) => (
+                                        <button key={c} onClick={() => setFrameColor(c)} className={`w-8 h-8 rounded-full border-2 ${frameColor === c ? 'border-rose-400 scale-125' : 'border-slate-200'}`} style={{ backgroundColor: c === 'bg-white' ? '#fff' : c === 'bg-pink-100' ? '#fce4ec' : c === 'bg-yellow-50' ? '#fefce8' : '#0f172a' }} />
+                                    ))}
+                                </div>
+                                <button disabled={photos.length < 4} onClick={downloadStrip} className={`w-full py-4 rounded-xl font-bold text-white ${photos.length < 4 ? 'bg-slate-300' : 'bg-indigo-500 hover:bg-indigo-600'}`}>
+                                    下載成品圖片
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <canvas ref={canvasRef} className="hidden" />
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
